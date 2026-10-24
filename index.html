@@ -80,12 +80,10 @@
 <script>
   // ---------- AYARLAR ----------
   const RPC_ADRESI = "https://mainnet.helius-rpc.com/?api-key=8e2fd160-d29c-452f-bfd5-507192363a1f";
-  const JUP_ANAHTAR = "";
   const JUP_ADRES = "https://api.jup.ag";
-  // Anahtar yazılıysa gönder, boşsa hiç header gönderme
-  function jupBasliklar() { return JUP_ANAHTAR ? { "x-api-key": JUP_ANAHTAR } : {}; }
 
   const SOL_MINT = "So11111111111111111111111111111111111111112";
+  const JUP_MINT = "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN";
   const TOKEN_PROGRAMLARI = [
     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
     "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
@@ -205,9 +203,7 @@
   async function fiyatlariGetir(mintler) {
     const sonuc = {};
     for (const parca of parcala(mintler, 50)) {
-      const r = await fetch(JUP_ADRES + "/price/v3?ids=" + parca.join(","), {
-        headers: jupBasliklar()
-      });
+      const r = await fetch(JUP_ADRES + "/price/v3?ids=" + parca.join(","));
       if (!r.ok) throw new Error("Jupiter fiyat servisi cevap vermedi (kod " + r.status + ")");
       Object.assign(sonuc, await r.json());
     }
@@ -219,9 +215,7 @@
     const sonuc = {};
     try {
       for (const parca of parcala(mintler, 100)) {
-        const r = await fetch(JUP_ADRES + "/tokens/v2/search?query=" + parca.join(","), {
-          headers: jupBasliklar()
-        });
+        const r = await fetch(JUP_ADRES + "/tokens/v2/search?query=" + parca.join(","));
         if (!r.ok) continue;
         const liste = await r.json();
         if (Array.isArray(liste)) {
@@ -232,10 +226,19 @@
     return sonuc;
   }
 
+  // Jupiter'e stake edilmiş JUP. Başarısız olursa null döner, sayfa bozulmaz.
+  async function stakeJupGetir(adres) {
+    try {
+      const r = await fetch(JUP_ADRES + "/portfolio/v1/staked-jup/" + adres);
+      if (!r.ok) return null;
+      return await r.json();
+    } catch (hata) { return null; }
+  }
+
   async function bakiyeleriGetir() {
     const durum = $("pano-durum");
-    if (RPC_ADRESI.startsWith("BURAYA") || JUP_ANAHTAR.startsWith("BURAYA")) {
-      durum.textContent = "Dosyanın başındaki RPC_ADRESI ve JUP_ANAHTAR satırlarını doldurman gerekiyor.";
+    if (RPC_ADRESI.startsWith("BURAYA")) {
+      durum.textContent = "Dosyanın başındaki RPC_ADRESI satırını doldurman gerekiyor.";
       return;
     }
     durum.textContent = "Bakiyeler yükleniyor...";
@@ -253,15 +256,28 @@
           if (miktar > 0) toplamlar[bilgi.mint] = (toplamlar[bilgi.mint] || 0) + miktar;
         });
       }
-      const satirlar = [{ mint: SOL_MINT, ad: "SOL", miktar: sol.value / 1e9, usd: null, fiyat: null }];
+      const satirlar = [{ mint: SOL_MINT, ad: "SOL", sabitAd: true, yerel: true, miktar: sol.value / 1e9, usd: null, fiyat: null }];
       Object.keys(toplamlar).forEach(function (mint) {
         satirlar.push({ mint: mint, ad: null, miktar: toplamlar[mint], usd: null, fiyat: null });
       });
 
-      // 2) Jupiter'den fiyatlar
+      // 2) Stake edilmiş JUP (varsa ayrı satırlar olarak eklenir)
+      const stake = await stakeJupGetir(aktifAdres);
+      if (stake) {
+        if (stake.stakedAmount > 0) {
+          satirlar.push({ mint: JUP_MINT, ad: "JUP (stake)", sabitAd: true, stake: true, miktar: stake.stakedAmount, usd: null, fiyat: null });
+        }
+        const cozulen = (stake.unstaking || []).reduce(function (t, u) { return t + (u.amount || 0); }, 0);
+        if (cozulen > 0) {
+          satirlar.push({ mint: JUP_MINT, ad: "JUP (çözülüyor)", sabitAd: true, stake: true, miktar: cozulen, usd: null, fiyat: null });
+        }
+      }
+
+      // 3) Jupiter'den fiyatlar
       let fiyatHatasi = null;
       try {
-        const fiyatlar = await fiyatlariGetir(satirlar.map(function (s) { return s.mint; }));
+        const mintler = Array.from(new Set(satirlar.map(function (s) { return s.mint; })));
+        const fiyatlar = await fiyatlariGetir(mintler);
         satirlar.forEach(function (s) {
           const f = fiyatlar[s.mint];
           if (f && typeof f.usdPrice === "number") {
@@ -271,13 +287,14 @@
         });
       } catch (hata) { fiyatHatasi = hata.message; }
 
-      // 3) Fiyatı olanların adları
-      const fiyatliMintler = satirlar.filter(function (s) { return s.usd !== null; })
-                                     .map(function (s) { return s.mint; });
+      // 4) Fiyatı olanların adları
+      const fiyatliMintler = Array.from(new Set(
+        satirlar.filter(function (s) { return s.usd !== null; }).map(function (s) { return s.mint; })
+      ));
       const adlar = await adlariGetir(fiyatliMintler);
       satirlar.forEach(function (s) {
+        if (s.sabitAd) return;
         const meta = adlar[s.mint];
-        if (s.mint === SOL_MINT && s.ad === "SOL") return;
         s.ad = (meta && meta.symbol ? String(meta.symbol).slice(0, 20) : null) || BILINEN[s.mint] || null;
       });
 
@@ -302,8 +319,12 @@
     $("st-toplam").textContent = fiyatli.length ? usd.format(toplam) : "-";
     $("st-sol").textContent = sayi.format(solSatiri.miktar);
     $("st-sol-alt").textContent = solSatiri.usd !== null ? usd.format(solSatiri.usd) : "Fiyat yok";
-    $("st-token").textContent = String(satirlar.length - 1);
-    $("st-token-alt").textContent = fiyatli.length + " fiyatlı, " + fiyatsiz.length + " fiyatsız";
+
+    // Token sayısına SOL ve stake satırları dahil değil
+    const tokenlar = satirlar.filter(function (s) { return !s.yerel && !s.stake; });
+    const tokenFiyatli = tokenlar.filter(function (s) { return s.usd !== null; }).length;
+    $("st-token").textContent = String(tokenlar.length);
+    $("st-token-alt").textContent = tokenFiyatli + " fiyatlı, " + (tokenlar.length - tokenFiyatli) + " fiyatsız";
 
     // Pasta dilimleri: en büyük dilimler + "Diğer"
     const dilimler = fiyatli.slice(0, EN_FAZLA_DILIM).map(function (s, i) {
@@ -317,7 +338,7 @@
     tabloDoldur($("tablo"), fiyatli, true);
     if (fiyatsiz.length) {
       goster("fiyatsiz-kutu", true);
-      $("fiyatsiz-baslik").textContent = "Fiyatı bulunamayan " + fiyatsiz.length + " token (pastaya dahil değil)";
+      $("fiyatsiz-baslik").textContent = "Fiyatı bulunamayan " + fiyatsiz.length + " satır (pastaya dahil değil)";
       tabloDoldur($("fiyatsiz-tablo"), fiyatsiz, false);
     } else {
       goster("fiyatsiz-kutu", false);
@@ -355,70 +376,4 @@
   }
 
   function pastaCiz(dilimler, toplam) {
-    const alan = $("pasta-alan");
-    const liste = $("gosterge");
-    alan.innerHTML = "";
-    liste.innerHTML = "";
-    if (!dilimler.length || toplam <= 0) {
-      alan.textContent = "Fiyatı bilinen varlık yok, grafik çizilemedi.";
-      alan.className = "mesaj";
-      return;
-    }
-    alan.className = "";
-    const NS = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(NS, "svg");
-    svg.setAttribute("viewBox", "0 0 42 42");
-    svg.setAttribute("class", "pasta");
-
-    function daire(renk) {
-      const c = document.createElementNS(NS, "circle");
-      c.setAttribute("cx", "21");
-      c.setAttribute("cy", "21");
-      c.setAttribute("r", "15.9155");   // çevresi tam 100 birim, yüzde hesabı kolaylaşır
-      c.setAttribute("fill", "none");
-      c.setAttribute("stroke", renk);
-      c.setAttribute("stroke-width", "6");
-      return c;
-    }
-    svg.appendChild(daire("#262d38"));
-
-    let birikmis = 0;
-    dilimler.forEach(function (d) {
-      const yuzde = d.deger / toplam * 100;
-      const c = daire(d.renk);
-      c.setAttribute("stroke-dasharray", yuzde + " " + (100 - yuzde));
-      c.setAttribute("stroke-dashoffset", String(25 - birikmis));  // 25: 12 yönünden başlat
-      svg.appendChild(c);
-      birikmis += yuzde;
-
-      const li = document.createElement("li");
-      const nokta = document.createElement("span");
-      nokta.className = "nokta";
-      nokta.style.background = d.renk;
-      const ad = document.createElement("span");
-      ad.className = "ad";
-      ad.textContent = d.ad;
-      const y = document.createElement("span");
-      y.className = "yuzde";
-      y.textContent = yuzde.toFixed(1).replace(".", ",") + "% · " + usd.format(d.deger);
-      li.appendChild(nokta); li.appendChild(ad); li.appendChild(y);
-      liste.appendChild(li);
-    });
-
-    function yazi(metin, y, boyut, renk) {
-      const t = document.createElementNS(NS, "text");
-      t.setAttribute("x", "21");
-      t.setAttribute("y", String(y));
-      t.setAttribute("text-anchor", "middle");
-      t.setAttribute("font-size", String(boyut));
-      t.setAttribute("fill", renk);
-      t.textContent = metin;
-      return t;
-    }
-    svg.appendChild(yazi("Toplam", 19.5, 2.6, "#8b95a5"));
-    svg.appendChild(yazi(usdKisa.format(toplam), 24, 3.6, "#e8ecf1"));
-    alan.appendChild(svg);
-  }
-</script>
-</body>
-</html>
+    const
