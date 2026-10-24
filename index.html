@@ -21,6 +21,7 @@
   <p id="durum">Cüzdanlar aranıyor...</p>
   <p id="adres"></p>
   <button id="yenile" style="display:none">Bakiyeleri yenile</button>
+  <button id="kes" style="display:none">Bağlantıyı kes</button>
   <div id="bakiyeler"></div>
 
   <script>
@@ -48,6 +49,7 @@
     // ---------- CÜZDAN BULMA (önceki adımla aynı) ----------
     const bulunanCuzdanlar = [];
     let aktifAdres = null;
+    let aktifCuzdan = null;
 
     function cuzdanEkle(cuzdan) {
       const solanaMi = cuzdan.chains.some(function (z) { return z.startsWith("solana:"); });
@@ -84,6 +86,9 @@
         durum.textContent = cuzdan.name + " bağlandı. Adresin:";
         document.getElementById("adres").textContent = aktifAdres;
         document.getElementById("yenile").style.display = "block";
+        document.getElementById("kes").style.display = "block";
+        aktifCuzdan = cuzdan;
+      
         bakiyeleriGetir();
       } catch (hata) {
         durum.textContent = "Bağlantı olmadı: " + hata.message;
@@ -172,7 +177,25 @@
       alan.appendChild(tablo);
     }
 
-    document.getElementById("yenile").onclick = bakiyeleriGetir;
+        document.getElementById("yenile").onclick = bakiyeleriGetir;
+
+    document.getElementById("kes").onclick = async function () {
+      try {
+        // Cüzdan "bağlantıyı kes" özelliğini destekliyorsa ona haber ver
+        const ozellik = aktifCuzdan && aktifCuzdan.features["standard:disconnect"];
+        if (ozellik) await ozellik.disconnect();
+      } catch (hata) {
+        // Cüzdan bu özelliği desteklemese de sayfayı temizlemeye devam ederiz
+      }
+      aktifAdres = null;
+      aktifCuzdan = null;
+      document.getElementById("adres").textContent = "";
+      document.getElementById("bakiyeler").innerHTML = "";
+      document.getElementById("yenile").style.display = "none";
+      document.getElementById("kes").style.display = "none";
+      document.getElementById("durum").textContent =
+        "Bağlantı kesildi. Tekrar bağlanmak için bir cüzdan seç:";
+    };
   </script>
 </body>
 </html>
