@@ -376,4 +376,70 @@
   }
 
   function pastaCiz(dilimler, toplam) {
-    const
+    const alan = $("pasta-alan");
+    const liste = $("gosterge");
+    alan.innerHTML = "";
+    liste.innerHTML = "";
+    if (!dilimler.length || toplam <= 0) {
+      alan.textContent = "Fiyatı bilinen varlık yok, grafik çizilemedi.";
+      alan.className = "mesaj";
+      return;
+    }
+    alan.className = "";
+    const NS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", "0 0 42 42");
+    svg.setAttribute("class", "pasta");
+
+    function daire(renk) {
+      const c = document.createElementNS(NS, "circle");
+      c.setAttribute("cx", "21");
+      c.setAttribute("cy", "21");
+      c.setAttribute("r", "15.9155");   // çevresi tam 100 birim, yüzde hesabı kolaylaşır
+      c.setAttribute("fill", "none");
+      c.setAttribute("stroke", renk);
+      c.setAttribute("stroke-width", "6");
+      return c;
+    }
+    svg.appendChild(daire("#262d38"));
+
+    let birikmis = 0;
+    dilimler.forEach(function (d) {
+      const yuzde = d.deger / toplam * 100;
+      const c = daire(d.renk);
+      c.setAttribute("stroke-dasharray", yuzde + " " + (100 - yuzde));
+      c.setAttribute("stroke-dashoffset", String(25 - birikmis));  // 25: 12 yönünden başlat
+      svg.appendChild(c);
+      birikmis += yuzde;
+
+      const li = document.createElement("li");
+      const nokta = document.createElement("span");
+      nokta.className = "nokta";
+      nokta.style.background = d.renk;
+      const ad = document.createElement("span");
+      ad.className = "ad";
+      ad.textContent = d.ad;
+      const y = document.createElement("span");
+      y.className = "yuzde";
+      y.textContent = yuzde.toFixed(1).replace(".", ",") + "% · " + usd.format(d.deger);
+      li.appendChild(nokta); li.appendChild(ad); li.appendChild(y);
+      liste.appendChild(li);
+    });
+
+    function yazi(metin, y, boyut, renk) {
+      const t = document.createElementNS(NS, "text");
+      t.setAttribute("x", "21");
+      t.setAttribute("y", String(y));
+      t.setAttribute("text-anchor", "middle");
+      t.setAttribute("font-size", String(boyut));
+      t.setAttribute("fill", renk);
+      t.textContent = metin;
+      return t;
+    }
+    svg.appendChild(yazi("Toplam", 19.5, 2.6, "#8b95a5"));
+    svg.appendChild(yazi(usdKisa.format(toplam), 24, 3.6, "#e8ecf1"));
+    alan.appendChild(svg);
+  }
+</script>
+</body>
+</html>
