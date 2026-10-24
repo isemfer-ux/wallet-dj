@@ -42,6 +42,22 @@
     summary { cursor:pointer; color:var(--soluk); }
     .gizli { display:none; }
     .mesaj { color:var(--soluk); padding:.5rem 0; }
+
+    /* Simülasyon */
+    #sim-bolum { margin-top:1rem; }
+    select { background:var(--cizgi); color:var(--yazi); border:0; border-radius:8px; padding:.55rem; font-size:1rem; max-width:100%; }
+    input[type=range] { width:100%; margin:.5rem 0 .2rem; }
+    .sim-satir { padding:.8rem 0; border-bottom:1px solid var(--cizgi); }
+    .sim-ust { display:flex; align-items:center; gap:.5rem; }
+    .sim-ad { flex:1; font-weight:600; }
+    .sim-kilit { font-size:.9rem; color:var(--soluk); display:flex; align-items:center; gap:.3rem; cursor:pointer; }
+    .sim-yuzde { font-variant-numeric:tabular-nums; }
+    .art { color:#19c37d; }
+    .azal { color:#ef5d5d; }
+    .islem { font-weight:600; margin-top:.2rem; }
+    .sim-ozet div { padding:.25rem 0; font-variant-numeric:tabular-nums; }
+    .uyari { color:#f5a524; font-size:.9rem; margin:.4rem 0; }
+    .sim-uyarisi { background:#2a2414; border:1px solid #5a4a1c; color:#f0d58c; border-radius:10px; padding:.6rem .8rem; font-size:.9rem; margin-bottom:1rem; }
   </style>
 </head>
 <body>
@@ -74,6 +90,28 @@
         <details id="fiyatsiz-kutu" class="gizli"><summary id="fiyatsiz-baslik"></summary><table id="fiyatsiz-tablo"></table></details>
       </div>
     </div>
+
+    <div id="sim-bolum" class="gizli">
+      <div class="sim-uyarisi">Bu bölüm sadece hesaplar. Hiçbir işlem yapmaz ve cüzdanından izin istemez. Ücret ve fiyat kayması dahil değildir, rakamlar yaklaşıktır.</div>
+      <div class="izgara">
+        <div class="kart">
+          <h2>Portföy ayarı</h2>
+          <div class="aksiyon">
+            <label class="kucuk">Fon kaynağı<br><select id="sim-kaynak"></select></label>
+            <button id="sim-sifirla" class="btn ikincil">Sıfırla</button>
+          </div>
+          <div id="sim-liste"></div>
+          <p id="sim-kucuk-not" class="kucuk"></p>
+        </div>
+        <div class="kart">
+          <h2>İşlem planı</h2>
+          <div id="sim-ozet" class="sim-ozet"></div>
+          <div id="sim-uyarilar"></div>
+          <h2 style="margin-top:1rem">Sonraki dağılım</h2>
+          <div id="sim-pasta-alan"></div><ul id="sim-gosterge" class="gosterge"></ul>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -83,7 +121,6 @@
   const JUP_ADRES = "https://api.jup.ag";
 
   const SOL_MINT = "So11111111111111111111111111111111111111112";
-  const JUP_MINT = "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN";
   const TOKEN_PROGRAMLARI = [
     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
     "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
@@ -102,11 +139,21 @@
   const DIGER_RENK = "#8b95a5";
   const EN_FAZLA_DILIM = 7;
 
+  // Simülasyon ayarları
+  const SIM_RENKLER = ["#7c5cff", "#19c37d", "#f5a524", "#ef5da8", "#3ea6ff", "#ff6b4a", "#2ed3c6", "#b6c24a", "#c77dff", "#8b95a5"];
+  const STABIL_SEMBOLLER = ["USDC", "USDT", "USDS", "PYUSD", "JUPUSD", "USDE", "FDUSD", "USDG", "USD1", "DAI"];
+  const MIN_DEGER = 1;       // Bu dolardan küçük varlıklar simülasyona alınmaz
+  const SOL_REZERV = 0.02;   // İşlem ücretleri için SOL'da kalması gereken asgari miktar
+
   // ---------- KÜÇÜK YARDIMCILAR ----------
   const $ = function (id) { return document.getElementById(id); };
   const usd = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "USD" });
   const usdKisa = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
   const sayi = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 6 });
+  function miktarYaz(n) {
+    return new Intl.NumberFormat("tr-TR", { maximumFractionDigits: n < 1 ? 8 : 4 }).format(n);
+  }
+  function yuzdeYaz(p) { return "%" + p.toFixed(1).replace(".", ","); }
   function fiyatYaz(p) {
     return new Intl.NumberFormat("tr-TR", {
       style: "currency", currency: "USD",
@@ -226,15 +273,6 @@
     return sonuc;
   }
 
-  // Jupiter'e stake edilmiş JUP. Başarısız olursa null döner, sayfa bozulmaz.
-  async function stakeJupGetir(adres) {
-    try {
-      const r = await fetch(JUP_ADRES + "/portfolio/v1/staked-jup/" + adres);
-      if (!r.ok) return null;
-      return await r.json();
-    } catch (hata) { return null; }
-  }
-
   async function bakiyeleriGetir() {
     const durum = $("pano-durum");
     if (RPC_ADRESI.startsWith("BURAYA")) {
@@ -261,19 +299,7 @@
         satirlar.push({ mint: mint, ad: null, miktar: toplamlar[mint], usd: null, fiyat: null });
       });
 
-      // 2) Stake edilmiş JUP (varsa ayrı satırlar olarak eklenir)
-      const stake = await stakeJupGetir(aktifAdres);
-      if (stake) {
-        if (stake.stakedAmount > 0) {
-          satirlar.push({ mint: JUP_MINT, ad: "JUP (stake)", sabitAd: true, stake: true, miktar: stake.stakedAmount, usd: null, fiyat: null });
-        }
-        const cozulen = (stake.unstaking || []).reduce(function (t, u) { return t + (u.amount || 0); }, 0);
-        if (cozulen > 0) {
-          satirlar.push({ mint: JUP_MINT, ad: "JUP (çözülüyor)", sabitAd: true, stake: true, miktar: cozulen, usd: null, fiyat: null });
-        }
-      }
-
-      // 3) Jupiter'den fiyatlar
+      // 2) Jupiter'den fiyatlar
       let fiyatHatasi = null;
       try {
         const mintler = Array.from(new Set(satirlar.map(function (s) { return s.mint; })));
@@ -287,7 +313,7 @@
         });
       } catch (hata) { fiyatHatasi = hata.message; }
 
-      // 4) Fiyatı olanların adları
+      // 3) Fiyatı olanların adları
       const fiyatliMintler = Array.from(new Set(
         satirlar.filter(function (s) { return s.usd !== null; }).map(function (s) { return s.mint; })
       ));
@@ -299,6 +325,7 @@
       });
 
       panoyuCiz(satirlar, fiyatHatasi);
+      simKur(satirlar);
     } catch (hata) {
       durum.textContent = "Bakiyeler alınamadı: " + hata.message;
     }
@@ -320,8 +347,8 @@
     $("st-sol").textContent = sayi.format(solSatiri.miktar);
     $("st-sol-alt").textContent = solSatiri.usd !== null ? usd.format(solSatiri.usd) : "Fiyat yok";
 
-    // Token sayısına SOL ve stake satırları dahil değil
-    const tokenlar = satirlar.filter(function (s) { return !s.yerel && !s.stake; });
+    // Token sayısına SOL dahil değil
+    const tokenlar = satirlar.filter(function (s) { return !s.yerel; });
     const tokenFiyatli = tokenlar.filter(function (s) { return s.usd !== null; }).length;
     $("st-token").textContent = String(tokenlar.length);
     $("st-token-alt").textContent = tokenFiyatli + " fiyatlı, " + (tokenlar.length - tokenFiyatli) + " fiyatsız";
@@ -332,7 +359,7 @@
     });
     const digerDeger = fiyatli.slice(EN_FAZLA_DILIM).reduce(function (t, s) { return t + s.usd; }, 0);
     if (digerDeger > 0) dilimler.push({ ad: "Diğer", deger: digerDeger, renk: DIGER_RENK });
-    pastaCiz(dilimler, toplam);
+    pastaCiz($("pasta-alan"), $("gosterge"), dilimler, toplam, "Toplam");
 
     // Tablo
     tabloDoldur($("tablo"), fiyatli, true);
@@ -375,9 +402,8 @@
     });
   }
 
-  function pastaCiz(dilimler, toplam) {
-    const alan = $("pasta-alan");
-    const liste = $("gosterge");
+  // Pasta grafiği: hangi alana, hangi listeye çizileceğini dışarıdan alır
+  function pastaCiz(alan, liste, dilimler, toplam, ortaYazi) {
     alan.innerHTML = "";
     liste.innerHTML = "";
     if (!dilimler.length || toplam <= 0) {
@@ -436,9 +462,332 @@
       t.textContent = metin;
       return t;
     }
-    svg.appendChild(yazi("Toplam", 19.5, 2.6, "#8b95a5"));
+    svg.appendChild(yazi(ortaYazi, 19.5, 2.6, "#8b95a5"));
     svg.appendChild(yazi(usdKisa.format(toplam), 24, 3.6, "#e8ecf1"));
     alan.appendChild(svg);
+  }
+
+  // =====================================================
+  // ---------- PORTFÖY SİMÜLASYONU ----------
+  // =====================================================
+  // Simülasyonun durumu:
+  //   varliklar : simülasyona giren varlıklar (key, ad, usd, miktar, fiyat, renk)
+  //   toplam    : bu varlıkların toplam dolar değeri
+  //   kilit     : { key: true }  -> kilitli varlıklar, hiç değişmez
+  //   elle      : { key: yuzde } -> kaydırıcıyla elle ayarlanan hedef yüzdeler
+  //   kaynak    : "OTO" ya da tek bir varlığın key'i (fon kaynağı)
+  //   ref       : ekrandaki elemanlara kısa yollar
+  const sim = { varliklar: [], toplam: 0, kilit: {}, elle: {}, kaynak: "OTO", ref: {} };
+
+  function bul(key) {
+    return sim.varliklar.find(function (a) { return a.key === key; });
+  }
+
+  // Farkı karşılayacak varlıklar: kilitsiz ve elle ayarlanmamış olanlar.
+  // Tek kaynak seçildiyse sadece o.
+  function karsiTaraf(haric) {
+    let k = sim.varliklar.filter(function (a) {
+      return !sim.kilit[a.key] && sim.elle[a.key] === undefined && a.key !== haric;
+    });
+    if (sim.kaynak !== "OTO") {
+      k = k.filter(function (a) { return a.key === sim.kaynak; });
+    }
+    return k;
+  }
+
+  // Bir varlık için kaydırıcının gidebileceği en düşük ve en yüksek yüzde
+  function izinli(key) {
+    const a = bul(key);
+    const T = sim.toplam;
+    let digerFark = 0;   // elle ayarlanan DİĞER varlıkların toplam dolar değişimi
+    Object.keys(sim.elle).forEach(function (k) {
+      if (k !== key) digerFark += sim.elle[k] / 100 * T - bul(k).usd;
+    });
+    const S = karsiTaraf(key).reduce(function (t, x) { return t + x.usd; }, 0);
+    let alt, ust;
+    if (S <= 0.000001) {
+      // Farkı karşılayacak kimse yok: bu varlık değişemez
+      alt = ust = a.usd - digerFark;
+    } else {
+      alt = 0;
+      ust = a.usd + S - digerFark;
+    }
+    alt = Math.max(0, alt);
+    ust = Math.max(alt, Math.min(T, ust));
+    return { min: alt / T * 100, max: ust / T * 100 };
+  }
+
+  // Elle ayarlanan değerleri izinli aralığa çek
+  function elleDuzelt() {
+    Object.keys(sim.elle).forEach(function (k) {
+      const r = izinli(k);
+      sim.elle[k] = Math.min(r.max, Math.max(r.min, sim.elle[k]));
+    });
+  }
+
+  // Her varlığın yeni dolar değerini hesapla
+  function simSonuc() {
+    const T = sim.toplam;
+    const yeni = {};
+    let D = 0;   // elle yapılan değişikliklerin toplam dolar farkı
+    sim.varliklar.forEach(function (a) {
+      if (sim.elle[a.key] !== undefined) {
+        yeni[a.key] = sim.elle[a.key] / 100 * T;
+        D += yeni[a.key] - a.usd;
+      }
+    });
+    const karsi = karsiTaraf(null);
+    const S = karsi.reduce(function (t, x) { return t + x.usd; }, 0);
+    sim.varliklar.forEach(function (a) {
+      if (yeni[a.key] !== undefined) return;
+      const karsilayici = karsi.indexOf(a) >= 0;
+      // Karşılayıcılar farkı kendi büyüklükleriyle orantılı olarak üstlenir
+      yeni[a.key] = (karsilayici && S > 0) ? Math.max(0, a.usd - D * a.usd / S) : a.usd;
+    });
+    return yeni;
+  }
+
+  function simKur(satirlar) {
+    // 1) Aynı mint'i birleştir (örneğin SOL + wSOL)
+    const gruplar = {};
+    satirlar.forEach(function (s) {
+      if (s.usd === null) return;
+      let g = gruplar[s.mint];
+      if (!g) g = gruplar[s.mint] = { key: s.mint, ad: s.ad, usd: 0, miktar: 0, fiyat: s.fiyat };
+      g.usd += s.usd;
+      g.miktar += s.miktar;
+    });
+
+    // 2) Bilinen dolar türevlerini tek "USD (stabil)" varlığında topla
+    const liste = [];
+    let stabil = null;
+    Object.keys(gruplar).forEach(function (k) {
+      const g = gruplar[k];
+      const sembol = String(g.ad || "").toUpperCase();
+      if (STABIL_SEMBOLLER.indexOf(sembol) >= 0 && g.fiyat > 0.95 && g.fiyat < 1.05) {
+        if (!stabil) stabil = { key: "USD", ad: "USD (stabil)", usd: 0, miktar: 0, fiyat: 1, uyeler: [] };
+        stabil.usd += g.usd;
+        stabil.miktar += g.usd;
+        stabil.uyeler.push(g.ad);
+      } else {
+        liste.push(g);
+      }
+    });
+    if (stabil) liste.push(stabil);
+
+    // 3) Çok küçükleri ele, büyükten küçüğe sırala, renk ver
+    const varliklar = liste.filter(function (a) { return a.usd >= MIN_DEGER; })
+                           .sort(function (a, b) { return b.usd - a.usd; });
+    const kucukSayisi = liste.length - varliklar.length;
+    varliklar.forEach(function (a, i) { a.renk = SIM_RENKLER[i % SIM_RENKLER.length]; });
+
+    if (varliklar.length < 2) {
+      goster("sim-bolum", false);
+      return;
+    }
+
+    sim.varliklar = varliklar;
+    sim.toplam = varliklar.reduce(function (t, a) { return t + a.usd; }, 0);
+    sim.kilit = {};
+    sim.elle = {};
+    sim.kaynak = "OTO";
+    sim.ref = {};
+
+    $("sim-kucuk-not").textContent = kucukSayisi > 0
+      ? kucukSayisi + " küçük varlık (" + usd.format(MIN_DEGER) + " altı) simülasyona dahil değil."
+      : "";
+
+    // Fon kaynağı listesi
+    const secim = $("sim-kaynak");
+    secim.innerHTML = "";
+    const oto = document.createElement("option");
+    oto.value = "OTO";
+    oto.textContent = "Otomatik (kilitsiz diğerlerinden orantılı)";
+    secim.appendChild(oto);
+    varliklar.forEach(function (a) {
+      const o = document.createElement("option");
+      o.value = a.key;
+      o.textContent = "Sadece " + adGoster(a);
+      secim.appendChild(o);
+    });
+    secim.value = "OTO";
+
+    // Her varlık için bir satır
+    const alan = $("sim-liste");
+    alan.innerHTML = "";
+    varliklar.forEach(function (a) {
+      const kutu = document.createElement("div");
+      kutu.className = "sim-satir";
+
+      const ust = document.createElement("div");
+      ust.className = "sim-ust";
+      const nokta = document.createElement("span");
+      nokta.className = "nokta";
+      nokta.style.background = a.renk;
+      const ad = document.createElement("span");
+      ad.className = "sim-ad";
+      ad.textContent = adGoster(a);
+      const etiket = document.createElement("label");
+      etiket.className = "sim-kilit";
+      const kilit = document.createElement("input");
+      kilit.type = "checkbox";
+      etiket.appendChild(kilit);
+      etiket.appendChild(document.createTextNode(" Kilitle"));
+      ust.appendChild(nokta); ust.appendChild(ad); ust.appendChild(etiket);
+      kutu.appendChild(ust);
+
+      if (a.uyeler) {
+        const u = document.createElement("div");
+        u.className = "kucuk";
+        u.textContent = a.uyeler.join(", ");
+        kutu.appendChild(u);
+      }
+
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.min = "0";
+      slider.max = "100";
+      slider.step = "0.1";
+      kutu.appendChild(slider);
+
+      const yuzdeKutu = document.createElement("div");
+      yuzdeKutu.className = "sim-yuzde";
+      const yuzde = document.createElement("span");
+      const fark = document.createElement("span");
+      yuzdeKutu.appendChild(yuzde); yuzdeKutu.appendChild(fark);
+      kutu.appendChild(yuzdeKutu);
+
+      const bilgi = document.createElement("div");
+      bilgi.className = "kucuk";
+      kutu.appendChild(bilgi);
+
+      const islem = document.createElement("div");
+      islem.className = "islem";
+      kutu.appendChild(islem);
+
+      alan.appendChild(kutu);
+      sim.ref[a.key] = { slider: slider, kilit: kilit, yuzde: yuzde, fark: fark, bilgi: bilgi, islem: islem };
+
+      slider.oninput = function () {
+        sim.elle[a.key] = parseFloat(slider.value);
+        elleDuzelt();
+        simGuncelle();
+      };
+      kilit.onchange = function () {
+        if (kilit.checked) { sim.kilit[a.key] = true; delete sim.elle[a.key]; }
+        else { delete sim.kilit[a.key]; }
+        elleDuzelt();
+        simGuncelle();
+      };
+    });
+
+    goster("sim-bolum", true);
+    simGuncelle();
+  }
+
+  $("sim-kaynak").onchange = function () {
+    sim.kaynak = $("sim-kaynak").value;
+    if (sim.kaynak !== "OTO") {
+      // Kaynak olan varlık ne kilitli ne elle ayarlı olabilir
+      delete sim.elle[sim.kaynak];
+      delete sim.kilit[sim.kaynak];
+      if (sim.ref[sim.kaynak]) sim.ref[sim.kaynak].kilit.checked = false;
+    }
+    elleDuzelt();
+    simGuncelle();
+  };
+
+  $("sim-sifirla").onclick = function () {
+    sim.elle = {};
+    sim.kilit = {};
+    sim.kaynak = "OTO";
+    $("sim-kaynak").value = "OTO";
+    sim.varliklar.forEach(function (a) { sim.ref[a.key].kilit.checked = false; });
+    simGuncelle();
+  };
+
+  function simGuncelle() {
+    const T = sim.toplam;
+    const yeni = simSonuc();
+    const satislar = [];
+    const alislar = [];
+
+    sim.varliklar.forEach(function (a) {
+      const r = sim.ref[a.key];
+      const y = yeni[a.key];
+      const delta = y - a.usd;
+      const eskiP = a.usd / T * 100;
+      const yeniP = y / T * 100;
+      const fark = yeniP - eskiP;
+
+      r.slider.value = String(yeniP);
+      r.slider.disabled = !!sim.kilit[a.key] || a.key === sim.kaynak;
+      r.kilit.disabled = a.key === sim.kaynak;
+
+      r.yuzde.textContent = yuzdeYaz(eskiP) + " → " + yuzdeYaz(yeniP);
+      r.fark.textContent = Math.abs(fark) < 0.05 ? "" : " (" + (fark > 0 ? "+" : "") + fark.toFixed(1).replace(".", ",") + ")";
+      r.fark.className = fark > 0 ? "art" : "azal";
+      r.bilgi.textContent = "Şimdi " + usd.format(a.usd) + " → Sonra " + usd.format(y);
+
+      if (delta > 0.01) {
+        r.islem.textContent = "AL " + usd.format(delta) + " ≈ " + miktarYaz(delta / a.fiyat) + " " + adGoster(a);
+        r.islem.className = "islem art";
+        alislar.push({ a: a, delta: delta });
+      } else if (delta < -0.01) {
+        r.islem.textContent = "SAT " + usd.format(-delta) + " ≈ " + miktarYaz(-delta / a.fiyat) + " " + adGoster(a);
+        r.islem.className = "islem azal";
+        satislar.push({ a: a, delta: -delta });
+      } else {
+        r.islem.textContent = sim.kilit[a.key] ? "Kilitli" : "Değişmiyor";
+        r.islem.className = "islem kucuk";
+      }
+    });
+
+    // İşlem planı
+    const ozet = $("sim-ozet");
+    ozet.innerHTML = "";
+    function satirEkle(metin, sinif) {
+      const d = document.createElement("div");
+      d.textContent = metin;
+      if (sinif) d.className = sinif;
+      ozet.appendChild(d);
+    }
+    if (!satislar.length && !alislar.length) {
+      satirEkle("Henüz değişiklik yok. Bir kaydırıcıyı oynat.", "kucuk");
+    } else {
+      satislar.forEach(function (x) {
+        satirEkle("SAT: " + miktarYaz(x.delta / x.a.fiyat) + " " + adGoster(x.a) + " (" + usd.format(x.delta) + ")", "azal");
+      });
+      alislar.forEach(function (x) {
+        satirEkle("AL: " + miktarYaz(x.delta / x.a.fiyat) + " " + adGoster(x.a) + " (" + usd.format(x.delta) + ")", "art");
+      });
+      const tasinan = alislar.reduce(function (t, x) { return t + x.delta; }, 0);
+      satirEkle("Toplam taşınan: " + usd.format(tasinan));
+    }
+
+    // Uyarılar
+    const uyarilar = $("sim-uyarilar");
+    uyarilar.innerHTML = "";
+    function uyariEkle(metin) {
+      const d = document.createElement("div");
+      d.className = "uyari";
+      d.textContent = metin;
+      uyarilar.appendChild(d);
+    }
+    const solVarlik = bul(SOL_MINT);
+    if (solVarlik && (satislar.length || alislar.length)) {
+      const yeniSol = yeni[SOL_MINT] / solVarlik.fiyat;
+      if (yeniSol < SOL_REZERV) {
+        uyariEkle("Dikkat: Sonrasında SOL miktarı " + miktarYaz(yeniSol) + " olur. İşlem ücretleri için en az " + SOL_REZERV + " SOL kalması önerilir.");
+      }
+    }
+
+    // Sonraki dağılım pastası
+    const dilimler = sim.varliklar
+      .map(function (a) { return { ad: adGoster(a), deger: yeni[a.key], renk: a.renk }; })
+      .filter(function (d) { return d.deger > 0.005; })
+      .sort(function (a, b) { return b.deger - a.deger; });
+    pastaCiz($("sim-pasta-alan"), $("sim-gosterge"), dilimler, T, "Sonra");
   }
 </script>
 </body>
