@@ -8,6 +8,10 @@
     body { font-family: sans-serif; max-width: 600px; margin: 2rem auto; padding: 0 1rem; }
     button { padding: 0.7rem 1.2rem; margin: 0.3rem 0; font-size: 1rem; cursor: pointer; display: block; }
     #adres { word-break: break-all; font-family: monospace; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #ccc; }
+    td.sayi { text-align: right; font-family: monospace; }
+    .kucuk { font-size: 0.8rem; color: #777; }
   </style>
 </head>
 <body>
@@ -16,48 +20,53 @@
   <div id="cuzdanlar"></div>
   <p id="durum">Cüzdanlar aranıyor...</p>
   <p id="adres"></p>
+  <button id="yenile" style="display:none">Bakiyeleri yenile</button>
+  <div id="bakiyeler"></div>
 
   <script>
-    // 1) Bulunan cüzdanları bu listede toplayacağız
-    const bulunanCuzdanlar = [];
+    // ---------- AYARLAR ----------
+    // Solana ağına soru sorduğumuz kapı (RPC). Sorun olursa burayı değiştiririz.
+    const RPC_ADRESI = "https://api.mainnet-beta.solana.com";
 
-    // 2) Bir cüzdan kendini tanıttığında listeye ekle
+    // İki token programı: eski ve yeni standart
+    const TOKEN_PROGRAMLARI = [
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+    ];
+
+    // Bildiğimiz bazı tokenlar: mint adresi -> kısa ad
+    const BILINEN = {
+      "So11111111111111111111111111111111111111112": "wSOL",
+      "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": "USDC",
+      "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": "USDT",
+      "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN": "JUP",
+      "jupSoLaHXQiZZTSfEWMTRRgpnyFm8f6sZdosWBjx93v": "JupSOL",
+      "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So": "mSOL",
+      "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": "BONK"
+    };
+
+    // ---------- CÜZDAN BULMA (önceki adımla aynı) ----------
+    const bulunanCuzdanlar = [];
+    let aktifAdres = null;
+
     function cuzdanEkle(cuzdan) {
-      // Sadece Solana'yı destekleyenleri al
-      const solanaMi = cuzdan.chains.some(function (zincir) {
-        return zincir.startsWith("solana:");
-      });
+      const solanaMi = cuzdan.chains.some(function (z) { return z.startsWith("solana:"); });
       if (!solanaMi) return;
       if (bulunanCuzdanlar.includes(cuzdan)) return;
-
       bulunanCuzdanlar.push(cuzdan);
       listeyiCiz();
     }
 
-    // 3) Cüzdanların bizimle konuşmak için kullandığı "kapı"
     const kapi = {
-      register: function (...cuzdanlar) {
-        cuzdanlar.forEach(cuzdanEkle);
-        return function () {};
-      }
+      register: function (...cuzdanlar) { cuzdanlar.forEach(cuzdanEkle); return function () {}; }
     };
+    window.addEventListener("wallet-standard:register-wallet", function (olay) { olay.detail(kapi); });
+    window.dispatchEvent(new CustomEvent("wallet-standard:app-ready", { detail: kapi }));
 
-    // Sonradan yüklenen cüzdanlar kendini tanıtırsa dinle
-    window.addEventListener("wallet-standard:register-wallet", function (olay) {
-      olay.detail(kapi);
-    });
-
-    // Zaten yüklü olan cüzdanlara "ben hazırım, tanıtın kendinizi" de
-    window.dispatchEvent(
-      new CustomEvent("wallet-standard:app-ready", { detail: kapi })
-    );
-
-    // 4) Bulunan cüzdanları ekranda düğme olarak göster
     function listeyiCiz() {
       const alan = document.getElementById("cuzdanlar");
       alan.innerHTML = "";
       document.getElementById("durum").textContent = "Bağlanmak için bir cüzdan seç:";
-
       bulunanCuzdanlar.forEach(function (cuzdan) {
         const dugme = document.createElement("button");
         dugme.textContent = cuzdan.name + " ile bağlan";
@@ -66,27 +75,104 @@
       });
     }
 
-    // 5) Düğmeye basılınca cüzdandan adres iste
     async function baglan(cuzdan) {
       const durum = document.getElementById("durum");
       try {
         durum.textContent = "Cüzdanında onay ekranı açılmalı...";
         const sonuc = await cuzdan.features["standard:connect"].connect();
-        const hesap = sonuc.accounts[0];
+        aktifAdres = sonuc.accounts[0].address;
         durum.textContent = cuzdan.name + " bağlandı. Adresin:";
-        document.getElementById("adres").textContent = hesap.address;
+        document.getElementById("adres").textContent = aktifAdres;
+        document.getElementById("yenile").style.display = "block";
+        bakiyeleriGetir();
       } catch (hata) {
         durum.textContent = "Bağlantı olmadı: " + hata.message;
       }
     }
 
-    // Hiçbir cüzdan bulunamazsa 2 saniye sonra uyar
     setTimeout(function () {
       if (bulunanCuzdanlar.length === 0) {
         document.getElementById("durum").textContent =
           "Hiç cüzdan bulunamadı. Tarayıcında cüzdan eklentisi kurulu mu?";
       }
     }, 2000);
+
+    // ---------- YENİ: RPC İLE SORU SORMA ----------
+    // Bu fonksiyon RPC'ye tek bir soru sorar ve cevabı getirir.
+    async function rpcSor(yontem, parametreler) {
+      const cevap = await fetch(RPC_ADRESI, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: yontem, params: parametreler })
+      });
+      if (!cevap.ok) throw new Error("RPC cevap vermedi (kod " + cevap.status + ")");
+      const veri = await cevap.json();
+      if (veri.error) throw new Error(veri.error.message);
+      return veri.result;
+    }
+
+    async function bakiyeleriGetir() {
+      const alan = document.getElementById("bakiyeler");
+      alan.textContent = "Bakiyeler yükleniyor...";
+      try {
+        // Soru 1: SOL bakiyesi (lamport cinsinden, 1 SOL = 1 milyar lamport)
+        const solSonuc = await rpcSor("getBalance", [aktifAdres]);
+        const solMiktar = solSonuc.value / 1000000000;
+
+        // Soru 2 ve 3: Her iki programdaki token hesapları
+        const satirlar = [];
+        for (const program of TOKEN_PROGRAMLARI) {
+          const sonuc = await rpcSor("getTokenAccountsByOwner", [
+            aktifAdres,
+            { programId: program },
+            { encoding: "jsonParsed" }
+          ]);
+          sonuc.value.forEach(function (hesap) {
+            const bilgi = hesap.account.data.parsed.info;
+            const miktar = bilgi.tokenAmount;
+            if (Number(miktar.uiAmountString) > 0) {
+              satirlar.push({ mint: bilgi.mint, miktar: miktar.uiAmountString });
+            }
+          });
+        }
+        tabloyuCiz(solMiktar, satirlar);
+      } catch (hata) {
+        alan.textContent = "Bakiyeler alınamadı: " + hata.message;
+      }
+    }
+
+    function tabloyuCiz(solMiktar, tokenlar) {
+      const alan = document.getElementById("bakiyeler");
+      alan.innerHTML = "";
+      const tablo = document.createElement("table");
+
+      function satirEkle(ad, mint, miktar) {
+        const tr = document.createElement("tr");
+        const td1 = document.createElement("td");
+        td1.textContent = ad;
+        if (mint) {
+          const alt = document.createElement("div");
+          alt.className = "kucuk";
+          alt.textContent = mint.slice(0, 4) + "..." + mint.slice(-4);
+          td1.appendChild(alt);
+        }
+        const td2 = document.createElement("td");
+        td2.className = "sayi";
+        td2.textContent = miktar;
+        tr.appendChild(td1);
+        tr.appendChild(td2);
+        tablo.appendChild(tr);
+      }
+
+      satirEkle("SOL", null, solMiktar.toString());
+      tokenlar.forEach(function (t) {
+        satirEkle(BILINEN[t.mint] || "Bilinmeyen token", t.mint, t.miktar);
+      });
+
+      alan.appendChild(tablo);
+    }
+
+    document.getElementById("yenile").onclick = bakiyeleriGetir;
   </script>
 </body>
 </html>
