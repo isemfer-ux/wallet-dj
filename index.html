@@ -80,8 +80,10 @@
 <script>
   // ---------- AYARLAR ----------
   const RPC_ADRESI = "https://mainnet.helius-rpc.com/?api-key=8e2fd160-d29c-452f-bfd5-507192363a1f";
-  const JUP_ANAHTAR = "jup_pub_f32c...5163";
+  const JUP_ANAHTAR = "";
   const JUP_ADRES = "https://api.jup.ag";
+  // Anahtar yazılıysa gönder, boşsa hiç header gönderme
+  function jupBasliklar() { return JUP_ANAHTAR ? { "x-api-key": JUP_ANAHTAR } : {}; }
 
   const SOL_MINT = "So11111111111111111111111111111111111111112";
   const TOKEN_PROGRAMLARI = [
@@ -204,7 +206,7 @@
     const sonuc = {};
     for (const parca of parcala(mintler, 50)) {
       const r = await fetch(JUP_ADRES + "/price/v3?ids=" + parca.join(","), {
-        headers: { "x-api-key": JUP_ANAHTAR }
+        headers: jupBasliklar()
       });
       if (!r.ok) throw new Error("Jupiter fiyat servisi cevap vermedi (kod " + r.status + ")");
       Object.assign(sonuc, await r.json());
@@ -218,7 +220,7 @@
     try {
       for (const parca of parcala(mintler, 100)) {
         const r = await fetch(JUP_ADRES + "/tokens/v2/search?query=" + parca.join(","), {
-          headers: { "x-api-key": JUP_ANAHTAR }
+          headers: jupBasliklar()
         });
         if (!r.ok) continue;
         const liste = await r.json();
