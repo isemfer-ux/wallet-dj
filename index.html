@@ -4,9 +4,89 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cüzdan Takip</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 2rem auto; padding: 0 1rem; }
+    button { padding: 0.7rem 1.2rem; margin: 0.3rem 0; font-size: 1rem; cursor: pointer; display: block; }
+    #adres { word-break: break-all; font-family: monospace; }
+  </style>
 </head>
 <body>
-  <h1>Merhaba!</h1>
-  <p>Bu benim ilk sayfam. Çalışıyor.</p>
+  <h1>Cüzdan Takip</h1>
+
+  <div id="cuzdanlar"></div>
+  <p id="durum">Cüzdanlar aranıyor...</p>
+  <p id="adres"></p>
+
+  <script>
+    // 1) Bulunan cüzdanları bu listede toplayacağız
+    const bulunanCuzdanlar = [];
+
+    // 2) Bir cüzdan kendini tanıttığında listeye ekle
+    function cuzdanEkle(cuzdan) {
+      // Sadece Solana'yı destekleyenleri al
+      const solanaMi = cuzdan.chains.some(function (zincir) {
+        return zincir.startsWith("solana:");
+      });
+      if (!solanaMi) return;
+      if (bulunanCuzdanlar.includes(cuzdan)) return;
+
+      bulunanCuzdanlar.push(cuzdan);
+      listeyiCiz();
+    }
+
+    // 3) Cüzdanların bizimle konuşmak için kullandığı "kapı"
+    const kapi = {
+      register: function (...cuzdanlar) {
+        cuzdanlar.forEach(cuzdanEkle);
+        return function () {};
+      }
+    };
+
+    // Sonradan yüklenen cüzdanlar kendini tanıtırsa dinle
+    window.addEventListener("wallet-standard:register-wallet", function (olay) {
+      olay.detail(kapi);
+    });
+
+    // Zaten yüklü olan cüzdanlara "ben hazırım, tanıtın kendinizi" de
+    window.dispatchEvent(
+      new CustomEvent("wallet-standard:app-ready", { detail: kapi })
+    );
+
+    // 4) Bulunan cüzdanları ekranda düğme olarak göster
+    function listeyiCiz() {
+      const alan = document.getElementById("cuzdanlar");
+      alan.innerHTML = "";
+      document.getElementById("durum").textContent = "Bağlanmak için bir cüzdan seç:";
+
+      bulunanCuzdanlar.forEach(function (cuzdan) {
+        const dugme = document.createElement("button");
+        dugme.textContent = cuzdan.name + " ile bağlan";
+        dugme.onclick = function () { baglan(cuzdan); };
+        alan.appendChild(dugme);
+      });
+    }
+
+    // 5) Düğmeye basılınca cüzdandan adres iste
+    async function baglan(cuzdan) {
+      const durum = document.getElementById("durum");
+      try {
+        durum.textContent = "Cüzdanında onay ekranı açılmalı...";
+        const sonuc = await cuzdan.features["standard:connect"].connect();
+        const hesap = sonuc.accounts[0];
+        durum.textContent = cuzdan.name + " bağlandı. Adresin:";
+        document.getElementById("adres").textContent = hesap.address;
+      } catch (hata) {
+        durum.textContent = "Bağlantı olmadı: " + hata.message;
+      }
+    }
+
+    // Hiçbir cüzdan bulunamazsa 2 saniye sonra uyar
+    setTimeout(function () {
+      if (bulunanCuzdanlar.length === 0) {
+        document.getElementById("durum").textContent =
+          "Hiç cüzdan bulunamadı. Tarayıcında cüzdan eklentisi kurulu mu?";
+      }
+    }, 2000);
+  </script>
 </body>
 </html>
